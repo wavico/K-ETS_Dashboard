@@ -299,12 +299,14 @@ table_result = None
 df_clean = df.dropna(subset=['분야 및 연도', '총배출량(kt CO2-eq)'])
 
 # 2단계: 최대값 찾기 및 추가 분석
-max_year = df_clean.loc[df_clean['총배출량(kt CO2-eq)'].idxmax(), '분야 및 연도']
+max_idx = df_clean['총배출량(kt CO2-eq)'].idxmax()
+max_year = df_clean.loc[max_idx, '분야 및 연도']
 max_value = df_clean['총배출량(kt CO2-eq)'].max()
 avg_value = df_clean['총배출량(kt CO2-eq)'].mean()
+difference = max_value - avg_value
 
-# 3단계: 결과 문자열 생성 (구체적인 수치로 예시 제공)
-result = "가장 배출량이 높은 연도는 2021년이며, 배출량은 1,234,567 kt CO2-eq입니다. 이는 평균 배출량(987,654 kt CO2-eq)보다 246,913 kt CO2-eq 높은 수치입니다."
+# 3단계: 결과 문자열 생성 (실제 계산된 값 사용)
+result = f"가장 배출량이 높은 연도는 {{int(max_year)}}년이며, 배출량은 {{max_value:,.0f}} kt CO2-eq입니다. 이는 평균 배출량({{avg_value:,.0f}} kt CO2-eq)보다 {{difference:,.0f}} kt CO2-eq 높은 수치입니다."
 table_result = None
 ```
 
@@ -319,8 +321,8 @@ min_value = df_clean['총배출량(kt CO2-eq)'].min()
 max_value = df_clean['총배출량(kt CO2-eq)'].max()
 count = len(df_clean)
 
-# 3단계: 결과 문자열 생성
-result = "총 배출량의 평균은 987,654 kt CO2-eq입니다. 최솟값 456,789 kt CO2-eq, 최댓값 1,234,567 kt CO2-eq이며, 총 15개 연도의 데이터를 기준으로 계산되었습니다."
+# 3단계: 결과 문자열 생성 (실제 계산된 값 사용)
+result = f"총 배출량의 평균은 {{avg_value:,.0f}} kt CO2-eq입니다. 최솟값 {{min_value:,.0f}} kt CO2-eq, 최댓값 {{max_value:,.0f}} kt CO2-eq이며, 총 {{count}}개 연도의 데이터를 기준으로 계산되었습니다."
 table_result = None
 ```
 
@@ -335,8 +337,12 @@ data_2021 = df_clean[df_clean['분야 및 연도'] == 2021]['총배출량(kt CO2
 difference = data_2021 - data_2020
 percent_change = (difference / data_2020) * 100
 
-# 3단계: 결과 문자열 생성
-result = "2020년과 2021년의 배출량 차이는 45,678 kt CO2-eq입니다. 2020년 1,189,123 kt CO2-eq에서 2021년 1,234,801 kt CO2-eq로 3.8% 증가했습니다."
+# 3단계: 결과 문자열 생성 (실제 계산된 값 및 올바른 기호 사용)
+change_direction = "증가" if difference > 0 else "감소"
+sign_str = f"+{{difference:,.0f}}" if difference > 0 else f"{{difference:,.0f}}"
+percent_sign = f"+{{percent_change:.1f}}" if percent_change > 0 else f"{{percent_change:.1f}}"
+
+result = f"2020년과 2021년의 배출량 차이는 {{sign_str}} kt CO2-eq입니다. 2020년 {{data_2020:,.0f}} kt CO2-eq에서 2021년 {{data_2021:,.0f}} kt CO2-eq로 {{percent_sign}}% {{change_direction}}했습니다."
 table_result = None
 ```
 
@@ -368,8 +374,20 @@ plt.gca().xaxis.set_major_formatter(FuncFormatter(lambda val, pos: str(int(val))
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
 
-# 5단계: 결과 설명 생성
-result = "2018-2022년 총 배출량 변화 추세를 라인 그래프로 생성했습니다. 2018년 1,189,456 kt CO2-eq에서 2022년 1,234,567 kt CO2-eq로 총 +45,111 kt CO2-eq (+3.8%) 변화했습니다."
+# 5단계: 실제 데이터 기반 결과 설명 생성
+start_year = int(df_plot['분야 및 연도'].iloc[0])
+end_year = int(df_plot['분야 및 연도'].iloc[-1])
+start_value = df_plot['총배출량(kt CO2-eq)'].iloc[0]
+end_value = df_plot['총배출량(kt CO2-eq)'].iloc[-1]
+total_change = end_value - start_value
+percent_change = (total_change / start_value) * 100
+
+# 올바른 기호 및 방향성 표시
+change_direction = "증가" if total_change > 0 else "감소"
+change_sign = f"+{{total_change:,.0f}}" if total_change > 0 else f"{{total_change:,.0f}}"
+percent_sign = f"+{{percent_change:.1f}}" if percent_change > 0 else f"{{percent_change:.1f}}"
+
+result = f"{{start_year}}-{{end_year}}년 총 배출량 변화 추세를 라인 그래프로 생성했습니다. {{start_year}}년 {{start_value:,.0f}} kt CO2-eq에서 {{end_year}}년 {{end_value:,.0f}} kt CO2-eq로 총 {{change_sign}} kt CO2-eq ({{percent_sign}}%) {{change_direction}}했습니다."
 table_result = None
 ```
 
@@ -395,8 +413,20 @@ plt.xticks(unique_years, [str(int(year)) for year in unique_years])
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
 
-# 5단계: 결과 설명 생성
-result = "전체 기간(2017-2022년) 총 배출량 변화 추세를 라인 그래프로 생성했습니다. 2017년 1,156,789 kt CO2-eq에서 2022년 1,234,567 kt CO2-eq로 총 +77,778 kt CO2-eq (+6.7%) 증가했습니다."
+# 5단계: 실제 데이터 기반 결과 설명 생성
+start_year = int(df_plot['분야 및 연도'].iloc[0])
+end_year = int(df_plot['분야 및 연도'].iloc[-1])
+start_value = df_plot['총배출량(kt CO2-eq)'].iloc[0]
+end_value = df_plot['총배출량(kt CO2-eq)'].iloc[-1]
+total_change = end_value - start_value
+percent_change = (total_change / start_value) * 100
+
+# 올바른 기호 및 방향성 표시
+change_direction = "증가" if total_change > 0 else "감소"
+change_sign = f"+{{total_change:,.0f}}" if total_change > 0 else f"{{total_change:,.0f}}"
+percent_sign = f"+{{percent_change:.1f}}" if percent_change > 0 else f"{{percent_change:.1f}}"
+
+result = f"전체 기간({{start_year}}-{{end_year}}년) 총 배출량 변화 추세를 라인 그래프로 생성했습니다. {{start_year}}년 {{start_value:,.0f}} kt CO2-eq에서 {{end_year}}년 {{end_value:,.0f}} kt CO2-eq로 총 {{change_sign}} kt CO2-eq ({{percent_sign}}%) {{change_direction}}했습니다."
 table_result = None
 ```
 
@@ -427,8 +457,13 @@ plt.plot(df_plot['분야 및 연도'], p(df_plot['분야 및 연도']), "--", al
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
 
-# 5단계: 결과 설명 생성
-result = "배출량 증감 추세를 라인 그래프로 분석했습니다. 전체적으로 증가 추세를 보이며, 연평균 약 15,556 kt CO2-eq씩 증가하고 있습니다. 빨간 점선은 추세선을 나타냅니다."
+# 5단계: 실제 추세 기반 결과 설명 생성
+slope = z[0]  # 추세선의 기울기
+years_span = df_plot['분야 및 연도'].iloc[-1] - df_plot['분야 및 연도'].iloc[0]
+annual_change = slope
+trend_direction = "증가" if slope > 0 else "감소"
+
+result = f"배출량 증감 추세를 라인 그래프로 분석했습니다. 전체적으로 {{trend_direction}} 추세를 보이며, 연평균 약 {{annual_change:,.0f}} kt CO2-eq씩 {{trend_direction}}하고 있습니다. 빨간 점선은 추세선을 나타냅니다."
 table_result = None
 ```
 
@@ -463,8 +498,18 @@ for bar, value in zip(bars, comparison_data['총배출량(kt CO2-eq)']):
 plt.grid(True, alpha=0.3, axis='y')
 plt.tight_layout()
 
-# 5단계: 결과 설명 생성
-result = "2017년과 2021년의 배출량을 막대 그래프로 비교했습니다. 2017년 1,156,789 kt CO2-eq에서 2021년 1,201,456 kt CO2-eq로 +44,667 kt CO2-eq (+3.9%) 증가했습니다."
+# 5단계: 실제 데이터 기반 결과 설명 생성
+value_2017 = comparison_data[comparison_data['분야 및 연도'] == 2017]['총배출량(kt CO2-eq)'].iloc[0]
+value_2021 = comparison_data[comparison_data['분야 및 연도'] == 2021]['총배출량(kt CO2-eq)'].iloc[0]
+difference = value_2021 - value_2017
+percent_change = (difference / value_2017) * 100
+
+# 올바른 기호 및 방향성 표시
+change_direction = "증가" if difference > 0 else "감소"
+change_sign = f"+{{difference:,.0f}}" if difference > 0 else f"{{difference:,.0f}}"
+percent_sign = f"+{{percent_change:.1f}}" if percent_change > 0 else f"{{percent_change:.1f}}"
+
+result = f"2017년과 2021년의 배출량을 막대 그래프로 비교했습니다. 2017년 {{value_2017:,.0f}} kt CO2-eq에서 2021년 {{value_2021:,.0f}} kt CO2-eq로 {{change_sign}} kt CO2-eq ({{percent_sign}}%) {{change_direction}}했습니다."
 table_result = None
 ```
 
@@ -495,8 +540,18 @@ for bar, value in zip(bars, comparison_data['총배출량(kt CO2-eq)']):
 plt.grid(True, alpha=0.3, axis='y')
 plt.tight_layout()
 
-# 5단계: 결과 설명 생성
-result = "2020년과 2021년의 배출량을 막대 그래프로 비교했습니다. 2020년 1,189,123 kt CO2-eq에서 2021년 1,201,456 kt CO2-eq로 +12,333 kt CO2-eq (+1.0%) 소폭 증가했습니다."
+# 5단계: 실제 데이터 기반 결과 설명 생성
+value_2020 = comparison_data[comparison_data['분야 및 연도'] == 2020]['총배출량(kt CO2-eq)'].iloc[0]
+value_2021 = comparison_data[comparison_data['분야 및 연도'] == 2021]['총배출량(kt CO2-eq)'].iloc[0]
+difference = value_2021 - value_2020
+percent_change = (difference / value_2020) * 100
+
+# 올바른 기호 및 방향성 표시
+change_direction = "증가" if difference > 0 else "감소"
+change_sign = f"+{{difference:,.0f}}" if difference > 0 else f"{{difference:,.0f}}"
+percent_sign = f"+{{percent_change:.1f}}" if percent_change > 0 else f"{{percent_change:.1f}}"
+
+result = f"2020년과 2021년의 배출량을 막대 그래프로 비교했습니다. 2020년 {{value_2020:,.0f}} kt CO2-eq에서 2021년 {{value_2021:,.0f}} kt CO2-eq로 {{change_sign}} kt CO2-eq ({{percent_sign}}%) {{change_direction}}했습니다."
 table_result = None
 ```
 
@@ -526,8 +581,15 @@ for bar, value in zip(bars, top3_data['총배출량(kt CO2-eq)']):
 plt.grid(True, alpha=0.3, axis='y')
 plt.tight_layout()
 
-# 5단계: 결과 설명 생성
-result = "배출량이 가장 높은 상위 3개 연도를 막대 그래프로 비교했습니다. 2022년이 1,234,567 kt CO2-eq로 가장 높고, 2021년 1,201,456 kt CO2-eq, 2020년 1,189,123 kt CO2-eq 순입니다."
+# 5단계: 실제 데이터 기반 결과 설명 생성
+highest_year = int(df_sorted.iloc[0]['분야 및 연도'])
+highest_value = df_sorted.iloc[0]['총배출량(kt CO2-eq)']
+second_year = int(top3_data.iloc[1]['분야 및 연도'])
+second_value = top3_data.iloc[1]['총배출량(kt CO2-eq)']
+third_year = int(top3_data.iloc[2]['분야 및 연도'])
+third_value = top3_data.iloc[2]['총배출량(kt CO2-eq)']
+
+result = f"배출량이 가장 높은 상위 3개 연도를 막대 그래프로 비교했습니다. {{highest_year}}년이 {{highest_value:,.0f}} kt CO2-eq로 가장 높고, {{second_year}}년 {{second_value:,.0f}} kt CO2-eq, {{third_year}}년 {{third_value:,.0f}} kt CO2-eq 순입니다."
 table_result = None
 ```
 
@@ -558,8 +620,20 @@ plt.gca().xaxis.set_major_formatter(FuncFormatter(lambda val, pos: str(int(val))
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
 
-# 5단계: 결과 설명 생성
-result = "에너지 부문 배출량 변화 추세를 라인 그래프로 생성했습니다. 2017년 456,789 kt CO2-eq에서 2022년 523,456 kt CO2-eq로 총 +66,667 kt CO2-eq (+14.6%) 증가했습니다."
+# 5단계: 실제 데이터 기반 결과 설명 생성
+start_year = int(df_plot['분야 및 연도'].iloc[0])
+end_year = int(df_plot['분야 및 연도'].iloc[-1])
+start_value = df_plot['에너지'].iloc[0]
+end_value = df_plot['에너지'].iloc[-1]
+total_change = end_value - start_value
+percent_change = (total_change / start_value) * 100
+
+# 올바른 기호 및 방향성 표시
+change_direction = "증가" if total_change > 0 else "감소"
+change_sign = f"+{{total_change:,.0f}}" if total_change > 0 else f"{{total_change:,.0f}}"
+percent_sign = f"+{{percent_change:.1f}}" if percent_change > 0 else f"{{percent_change:.1f}}"
+
+result = f"에너지 부문 배출량 변화 추세를 라인 그래프로 생성했습니다."
 table_result = None
 ```
 
@@ -586,8 +660,20 @@ plt.gca().xaxis.set_major_formatter(FuncFormatter(lambda val, pos: str(int(val))
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
 
-# 5단계: 결과 설명 생성
-result = "산업공정 부문 배출량 변화 추세를 라인 그래프로 생성했습니다. 2017년 123,456 kt CO2-eq에서 2022년 145,678 kt CO2-eq로 총 +22,222 kt CO2-eq (+18.0%) 증가했습니다."
+# 5단계: 실제 데이터 기반 결과 설명 생성
+start_year = int(df_plot['분야 및 연도'].iloc[0])
+end_year = int(df_plot['분야 및 연도'].iloc[-1])
+start_value = df_plot['산업공정'].iloc[0]
+end_value = df_plot['산업공정'].iloc[-1]
+total_change = end_value - start_value
+percent_change = (total_change / start_value) * 100
+
+# 올바른 기호 및 방향성 표시
+change_direction = "증가" if total_change > 0 else "감소"
+change_sign = f"+{{total_change:,.0f}}" if total_change > 0 else f"{{total_change:,.0f}}"
+percent_sign = f"+{{percent_change:.1f}}" if percent_change > 0 else f"{{percent_change:.1f}}"
+
+result = f"산업공정 부문 배출량 변화 추세를 라인 그래프로 생성했습니다."
 table_result = None
 ```
 
