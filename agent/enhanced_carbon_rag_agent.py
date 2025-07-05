@@ -263,9 +263,9 @@ class EnhancedCarbonRAGAgent:
                 parts = code.split("```")
                 if len(parts) >= 3:
                     code = parts[1]  # 첫 번째 코드 블록 추출
-                    # 가끔 'python'이 맨 앞에 붙는 경우를 대비해 제거
-                    if code.lstrip().startswith('python'):
-                        code = code.lstrip()[6:]
+                # 가끔 'python'이 맨 앞에 붙는 경우를 대비해 제거
+                if code.lstrip().startswith('python'):
+                    code = code.lstrip()[6:]
                 else:
                     # 코드 블록이 제대로 감싸지지 않은 경우
                     code = code.split("```")[1] if len(parts) >= 2 else code
