@@ -26,7 +26,8 @@ langsmith==0.3.18
 langchain-upstage>=0.1.0
 
 # Vector DB & AI 패키지들
-pinecone==5.4.2
+langchain-pinecone
+pinecone-client
 faiss-cpu>=1.7.0
 chromadb>=0.4.0
 tiktoken>=0.5.0
@@ -50,3 +51,9 @@ requests>=2.28.0
 python-dotenv>=0.19.0
 Pillow>=9.5.0
 tabulate==0.9.0
+
+# PDF 처리
+PyMuPDF
+
+# HTTP 요청
+requests

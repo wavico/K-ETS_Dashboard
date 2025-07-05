@@ -353,9 +353,6 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific
-data/*.csv
-data/*.xlsx
-data/*.xls
 *.db
 *.sqlite
 *.sqlite3
