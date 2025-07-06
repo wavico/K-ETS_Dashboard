@@ -7,8 +7,8 @@ interpretation_prompt_template = PromptTemplate.from_template(
                 ## 1. 사용자의 원본 질문
                 "{question}"
 
-                ## 2. 데이터 기반의 사실적 분석 결과
-                "{factual_result}"
+                ## 2. 검색된 사실 기반 컨텍스트
+                "{context}"
 
                 ## 3. 당신의 임무
                 위 정보를 바탕으로, 다음 내용을 포함하여 전문가의 견해를 한두 문단의 간결한 해설로 작성하세요:

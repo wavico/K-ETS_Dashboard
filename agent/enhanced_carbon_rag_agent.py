@@ -277,15 +277,15 @@ class EnhancedCarbonRAGAgent:
             print(f"❌ 코드 생성 실패: {e}")
             return None
         
-    def _interpret_result(self, question: str, factual_result: str) -> str:
+    def _interpret_result(self, question: str, context: str) -> str: # factual_result -> context로 수정함(doc_agent.py 참고)
         """분석 결과를 바탕으로 전문가의 해석을 생성합니다."""
-        if not self.interpretation_chain or not factual_result or "오류" in factual_result:
+        if not self.interpretation_chain or not context or "오류" in context:
             return "" # 해석을 생성할 수 없으면 빈 문자열 반환
         
         try:
             interpretation = self.interpretation_chain.invoke({
                 "question": question,
-                "factual_result": factual_result
+                "context": context
             })
             return interpretation
         except Exception as e:
@@ -436,21 +436,21 @@ class EnhancedCarbonRAGAgent:
                 return "❌ 분석 코드를 생성할 수 없습니다.", None, None, None
 
             # 2단계: 코드 실행하여 사실적 결과 얻기
-            factual_result, has_plot, table_result, figure_obj, namespace = self._execute_code(code)
+            context, has_plot, table_result, figure_obj, namespace = self._execute_code(code)
             
             # 3단계: 최종 결과 문자열 포맷팅
             try:
                 # namespace에 있는 변수들을 사용하여 문자열의 {변수} 부분을 실제 값으로 채웁니다.
-                factual_result = factual_result.format(**namespace)
+                context = context.format(**namespace)
             except (KeyError, IndexError) as e:
                 # 포맷팅에 실패하면 (예: result에 변수가 없는 경우) 원본 결과 사용
                 print(f"ℹ️ 정보: 결과 문자열 포맷팅 스킵 ({e})")
 
             # 4단계: 사실적 결과를 바탕으로 전문가 해석 생성
-            interpretation = self._interpret_result(question, factual_result)
+            interpretation = self._interpret_result(question, context)
 
             # 5단계: 최종 답변 조합
-            final_answer = f"📊 **분석 결과**\n{factual_result}"
+            final_answer = f"📊 **분석 결과**\n{context}"
             if interpretation:
                 final_answer += f"\n\n🔍 **전문가 견해**\n{interpretation}"
             
