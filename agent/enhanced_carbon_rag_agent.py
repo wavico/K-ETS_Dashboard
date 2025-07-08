@@ -425,10 +425,22 @@ class EnhancedCarbonRAGAgent:
             plt.close('all')  # 오류 시에도 그래프 정리
             return f"코드 실행 오류: {str(e)}", False, None, None, {}
     
-    def ask(self, question: str) -> Tuple[str, Optional[str], Optional[pd.DataFrame], Optional[object]]:
+    def ask(self, question: str, section_title: Optional[str] = None) -> Tuple[str, Optional[str], Optional[pd.DataFrame], Optional[object]]:
         """
         질문 처리의 전체 과정을 조율(Orchestrate)합니다.
-        1. 코드 생성 -> 2. 코드 실행 -> 3. 문서 기반 답변 조회 -> 4. 최종 답변 조합
+        질문에 답하거나, 주어진 섹션 제목에 대한 보고서 본문을 생성합니다.
+
+        1. 코드 생성 -> 2. 코드 실행 -> 3. 문서 기반 답변 조회 -> 4. 최종 답변 조합 및 서술형 변환
+        
+        Args:
+            question (str): 분석을 위한 핵심 질문입니다.
+            section_title (Optional[str]): None이 아닌 경우, 최종 결과를 이 제목의 보고서 섹션으로 포맷팅합니다.
+
+        Returns:
+            - 최종 답변 또는 보고서 섹션 본문 (str)
+            - 'plot_generated' 또는 None (str)
+            - 테이블 데이터 (pd.DataFrame)
+            - 그래프 객체 (matplotlib.figure.Figure)
         """
         if not self.llm:
             return "❌ LLM이 초기화되지 않았습니다.", None, None, None
@@ -460,10 +472,41 @@ class EnhancedCarbonRAGAgent:
             else:
                 print("⚠️ DocumentRAGAgent가 초기화되지 않아 문서 기반 답변을 생성할 수 없습니다.")
 
-            # 5단계: 최종 답변 조합
-            final_answer = f"📊 **분석 결과**\n{analytical_result}"
-            if document_based_answer and "오류" not in document_based_answer and document_based_answer.strip():
-                final_answer += f"\n\n📄 **관련 문서 정보**\n{document_based_answer}"
+            # 5단계: 최종 답변 생성 (조건부 서술형 변환)
+            if section_title:
+                # 보고서 섹션 생성을 위한 프롬프트
+                report_section_prompt_template = PromptTemplate.from_template(
+                    """
+                    당신은 데이터 분석 결과를 바탕으로 전문적인 보고서의 한 섹션을 작성하는 AI입니다.
+                    아래에 제공되는 [분석 결과 요약]과 [관련 문서 정보]를 바탕으로, '{section_title}' 섹션에 들어갈 본문 내용을 서술형으로 작성해주세요.
+
+                    - 딱딱하고 전문적인 톤을 유지하세요.
+                    - "분석 결과에 따르면"과 같은 서두 대신, 자연스럽게 본문을 시작하세요.
+                    - 숫자나 핵심적인 사실을 문장에 포함하여 신뢰도를 높이세요.
+                    - 최종 결과물은 다른 설명 없이, 보고서 본문 내용만 포함해야 합니다.
+
+                    [분석 결과 요약]:
+                    {analytical_result}
+
+                    [관련 문서 정보]:
+                    {document_based_answer}
+                    """
+                )
+                
+                # 서술형 변환 체인 생성 및 실행
+                rewriting_chain = report_section_prompt_template | self.llm | StrOutputParser()
+                
+                final_answer = rewriting_chain.invoke({
+                    "section_title": section_title,
+                    "analytical_result": analytical_result,
+                    "document_based_answer": document_based_answer
+                })
+
+            else:
+                # 일반 질문에 대한 답변 조합
+                final_answer = f"📊 **분석 결과**\n{analytical_result}"
+                if document_based_answer and "오류" not in document_based_answer and document_based_answer.strip():
+                    final_answer += f"\n\n📄 **관련 문서 정보**\n{document_based_answer}"
             
             return final_answer, "plot_generated" if has_plot else None, table_result, figure_obj
 
@@ -541,9 +584,19 @@ if __name__ == "__main__":
         question = input("\n❓ 질문: ")
         if question.lower() in ['quit', 'exit', '종료']:
             break
+
+        # 보고서 섹션 생성 테스트를 위한 분기
+        if question.startswith("보고서:"):
+            section_title = question.replace("보고서:", "").strip()
+            print(f"🤔 보고서 섹션 생성 중... (제목: {section_title})")
+            # 질문은 제목과 동일하게 사용하거나, 더 구체적인 질문으로 변환 가능
+            # 여기서는 간단히 제목을 질문으로 사용
+            answer, _, table_result, figure_obj = agent.ask(question=section_title, section_title=section_title)
         
-        print("🤔 분석 중...")
-        answer, _, table_result, figure_obj = agent.ask(question)
+        else:
+            print("🤔 분석 중...")
+            answer, _, table_result, figure_obj = agent.ask(question)
+
         print(f"🤖 답변: {answer}")
 
         if table_result is not None:
@@ -551,6 +604,6 @@ if __name__ == "__main__":
             print(table_result)
         
         if figure_obj is not None:
-            # 테스트 환경에서는 그래프를 보여주고 닫습니다.
+            # 테스트 환경에서는 그래프를 보여주고 닫음
             print("\n(그래프가 생성되었습니다. Streamlit 환경에서는 자동으로 표시됩니다.)")
             plt.show()

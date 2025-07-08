@@ -5,7 +5,7 @@ from langchain_upstage import ChatUpstage
 from langchain_core.messages import HumanMessage, SystemMessage
 from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
-from langchain_core.pydantic_v1 import BaseModel, Field # LangChain의 Pydantic 래퍼 사용
+from pydantic import BaseModel, Field
 
 # OpenAI API Key 로딩
 load_dotenv()
@@ -188,8 +188,8 @@ if __name__ == '__main__':
 
                 # 3. 결과물을 파일로 저장
                 try:
-                    # 'agent' 디렉토리가 있는지 확인하고 없으면 생성
-                    output_dir = os.path.join(project_root, 'agent')
+                    # 'template' 디렉토리가 있는지 확인하고 없으면 생성
+                    output_dir = os.path.join(project_root, 'template')
                     os.makedirs(output_dir, exist_ok=True)
                     
                     output_path = os.path.join(output_dir, "outline.json")

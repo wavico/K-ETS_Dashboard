@@ -1,9 +1,9 @@
 """
 문서 기반 RAG 에이전트 클래스
 
-이 클래스는 'docs' 폴더의 PDF 문서를 기반으로 질의응답을 수행하는 RAG(Retrieval-Augmented Generation) 시스템을 캡슐화합니다.
+이 클래스는 'docs' 폴더의 PDF 문서를 기반으로 질의응답을 수행하는 RAG(Retrieval-Augmented Generation) 시스템을 캡슐화
 초기화 시점에 문서 파싱, 임베딩, 벡터 저장소 동기화 등 모든 준비 작업을 수행하며,
-'ask' 메서드를 통해 간단하게 질문하고 문서 기반의 답변을 얻을 수 있습니다.
+'ask' 메서드를 통해 간단하게 질문하고 문서 기반의 답변을 얻을 수 있음
 """
 
 import os
