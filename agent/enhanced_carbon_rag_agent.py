@@ -28,6 +28,19 @@ except ImportError:
 # 환경변수 로드
 load_dotenv()
 
+# --- 프로젝트 루트를 sys.path에 추가 ---
+# 이 스크립트가 다른 모듈(예: doc_agent)을 올바르게 임포트할 수 있도록 프로젝트의 루트 디렉토리를 시스템 경로에 추가합니다.
+# 이렇게 하면 어떤 위치에서 스크립트를 실행하더라도 모듈을 찾는 데 문제가 발생하지 않습니다.
+try:
+    # 현재 파일의 절대 경로를 기준으로 프로젝트 루트를 찾습니다.
+    # 이 스크립트는 'agent' 폴더 안에 있으므로, 부모 디렉토리의 부모 디렉토리가 프로젝트 루트입니다.
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)  # sys.path의 맨 앞에 추가하여 우선순위를 높입니다.
+    from agent.doc_agent import DocumentRAGAgent
+except (ModuleNotFoundError, ImportError):
+    print("⚠️ DocumentRAGAgent 임포트 실패. 일부 기능이 제한될 수 있습니다.")
+    DocumentRAGAgent = None
 
 class EnhancedCarbonRAGAgent:
     
@@ -40,10 +53,23 @@ class EnhancedCarbonRAGAgent:
         self.df = None
         self.llm = None
         self.code_generation_chain = None
-        self.interpretation_chain = None
+        self.doc_agent = None  # 문서 기반 RAG 에이전트를 저장할 속성
         self._setup_korean_font()
         self._load_data()
         self._setup_llms_and_chains()
+
+        # DocumentRAGAgent 초기화
+        # 수치 분석 에이전트가 문서 검색 기능도 함께 사용할 수 있도록 내부에 인스턴스를 생성합니다.
+        if DocumentRAGAgent:
+            try:
+                print("\n--- DocumentRAGAgent 초기화 시도 ---")
+                self.doc_agent = DocumentRAGAgent()
+                print("✅ DocumentRAGAgent 초기화 성공")
+            except Exception as e:
+                print(f"⚠️ DocumentRAGAgent 초기화 실패: {e}")
+                self.doc_agent = None
+        else:
+            print("⚠️ DocumentRAGAgent를 사용할 수 없어 관련 기능이 비활성화됩니다.")
     
     def _setup_korean_font(self):
         """한글 폰트 설정"""
@@ -191,7 +217,6 @@ class EnhancedCarbonRAGAgent:
     
     def _setup_llms_and_chains(self):
         from prompts.code_generation import code_gen_prompt_template
-        from prompts.interpretation import interpretation_prompt_template
 
         """LLM 및 모든 LCEL 체인을 초기화하고 설정합니다."""
         try:
@@ -209,10 +234,6 @@ class EnhancedCarbonRAGAgent:
             
             self.code_generation_chain = code_gen_prompt_template | self.llm | StrOutputParser()
             print("✅ 코드 생성 체인 초기화 완료")
-
-            # 3. 결과 해석(Interpretation) 체인 설정
-            self.interpretation_chain = interpretation_prompt_template | self.llm | StrOutputParser()
-            print("✅ 결과 해석 체인 초기화 완료")
 
         except Exception as e:
             print(f"❌ LLM 및 체인 초기화 실패: {e}")
@@ -277,21 +298,6 @@ class EnhancedCarbonRAGAgent:
             print(f"❌ 코드 생성 실패: {e}")
             return None
         
-    def _interpret_result(self, question: str, context: str) -> str: # factual_result -> context로 수정함(doc_agent.py 참고)
-        """분석 결과를 바탕으로 전문가의 해석을 생성합니다."""
-        if not self.interpretation_chain or not context or "오류" in context:
-            return "" # 해석을 생성할 수 없으면 빈 문자열 반환
-        
-        try:
-            interpretation = self.interpretation_chain.invoke({
-                "question": question,
-                "context": context
-            })
-            return interpretation
-        except Exception as e:
-            print(f"⚠️ 해석 생성 중 오류 발생: {e}")
-            return "결과에 대한 추가 해석을 생성하는 데 실패했습니다."    
-
     def _execute_code(self, code: str) -> Tuple[str, bool, Optional[pd.DataFrame], Optional[object], Dict[str, Any]]:
         """안전하게 코드 실행하고, 실행 컨텍스트(namespace)도 함께 반환"""
         if not code:
@@ -422,7 +428,7 @@ class EnhancedCarbonRAGAgent:
     def ask(self, question: str) -> Tuple[str, Optional[str], Optional[pd.DataFrame], Optional[object]]:
         """
         질문 처리의 전체 과정을 조율(Orchestrate)합니다.
-        1. 코드 생성 -> 2. 코드 실행 -> 3. 결과 해석 -> 4. 최종 답변 조합
+        1. 코드 생성 -> 2. 코드 실행 -> 3. 문서 기반 답변 조회 -> 4. 최종 답변 조합
         """
         if not self.llm:
             return "❌ LLM이 초기화되지 않았습니다.", None, None, None
@@ -436,23 +442,28 @@ class EnhancedCarbonRAGAgent:
                 return "❌ 분석 코드를 생성할 수 없습니다.", None, None, None
 
             # 2단계: 코드 실행하여 사실적 결과 얻기
-            context, has_plot, table_result, figure_obj, namespace = self._execute_code(code)
+            analytical_result, has_plot, table_result, figure_obj, namespace = self._execute_code(code)
             
             # 3단계: 최종 결과 문자열 포맷팅
             try:
                 # namespace에 있는 변수들을 사용하여 문자열의 {변수} 부분을 실제 값으로 채웁니다.
-                context = context.format(**namespace)
+                analytical_result = analytical_result.format(**namespace)
             except (KeyError, IndexError) as e:
                 # 포맷팅에 실패하면 (예: result에 변수가 없는 경우) 원본 결과 사용
                 print(f"ℹ️ 정보: 결과 문자열 포맷팅 스킵 ({e})")
 
-            # 4단계: 사실적 결과를 바탕으로 전문가 해석 생성
-            interpretation = self._interpret_result(question, context)
+            # 4단계: 문서 기반의 사실적 답변 생성 (DocumentRAGAgent 호출)
+            document_based_answer = ""
+            if self.doc_agent:
+                print("🤔 문서 기반 답변 조회 중...")
+                document_based_answer = self.doc_agent.ask(question)
+            else:
+                print("⚠️ DocumentRAGAgent가 초기화되지 않아 문서 기반 답변을 생성할 수 없습니다.")
 
             # 5단계: 최종 답변 조합
-            final_answer = f"📊 **분석 결과**\n{context}"
-            if interpretation:
-                final_answer += f"\n\n🔍 **전문가 견해**\n{interpretation}"
+            final_answer = f"📊 **분석 결과**\n{analytical_result}"
+            if document_based_answer and "오류" not in document_based_answer and document_based_answer.strip():
+                final_answer += f"\n\n📄 **관련 문서 정보**\n{document_based_answer}"
             
             return final_answer, "plot_generated" if has_plot else None, table_result, figure_obj
 
