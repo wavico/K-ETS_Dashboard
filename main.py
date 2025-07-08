@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 from dotenv import load_dotenv
 import sys
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Literal
@@ -636,7 +636,7 @@ async def report_streamer(topic: str, outline: Dict[str, Any]):
 
             if content_stream and isinstance(content_stream, str):
                 # 생성된 내용을 문단별로 나누어 스트리밍
-                paragraphs = content_stream.split('\\n')
+                paragraphs = content_stream.split('\n')
                 for para in paragraphs:
                     if para.strip():
                         content_payload = {"type": "content", "payload": para.strip()}
@@ -706,4 +706,6 @@ async def download_report(
 # --- 서버 실행 (Uvicorn) ---
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
+    # Use environment variable to control reload
+    is_dev = os.getenv("ENVIRONMENT", "development") == "development"
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=is_dev)

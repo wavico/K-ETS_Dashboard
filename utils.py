@@ -137,10 +137,22 @@ def create_pdf(title: str, content: str) -> BytesIO:
     # 폰트 등록 (파일 경로를 확인해야 할 수 있음, 임시로 상대 경로 사용)
     # 실제 배포 환경에서는 폰트 파일의 경로를 정확히 지정해야 합니다.
     try:
-        # 윈도우 기본 폰트 경로
-        font_path = "c:/Windows/Fonts/malgun.ttf"
-        pdfmetrics.registerFont(TTFont('MalgunGothic', font_path))
-        font_name = 'MalgunGothic'
+        import platform
+        system = platform.system()
+        
+        if system == "Windows":
+            font_paths = ["c:/Windows/Fonts/malgun.ttf", "c:/Windows/Fonts/gulim.ttc"]
+        elif system == "Darwin":  # macOS
+            font_paths = ["/System/Library/Fonts/AppleGothic.ttf"]
+        else:  # Linux
+            font_paths = ["/usr/share/fonts/truetype/nanum/NanumGothic.ttf"]
+        
+        font_name = 'Helvetica'  # fallback
+        for font_path in font_paths:
+            if os.path.exists(font_path):
+                pdfmetrics.registerFont(TTFont('KoreanFont', font_path))
+                font_name = 'KoreanFont'
+                break
     except Exception:
         # 폰트 로드 실패 시 기본 폰트로 대체 (한글 깨질 수 있음)
         print("경고: '맑은 고딕' 폰트를 찾을 수 없습니다. PDF에서 한글이 깨질 수 있습니다.")
@@ -168,3 +180,4 @@ def create_pdf(title: str, content: str) -> BytesIO:
     
     buffer.seek(0)
     return buffer 
+
