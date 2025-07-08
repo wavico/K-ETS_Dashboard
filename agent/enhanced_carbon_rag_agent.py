@@ -22,8 +22,17 @@ try:
     from langchain_upstage import ChatUpstage
     UPSTAGE_AVAILABLE = True
 except ImportError:
-    from langchain_openai import ChatOpenAI
     UPSTAGE_AVAILABLE = False
+    # Upstage 라이브러리가 없어도 스크립트가 중단되지 않도록 ChatUpstage를 None으로 설정
+    ChatUpstage = None
+
+try:
+    from langchain_openai import ChatOpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    # OpenAI 라이브러리가 없어도 스크립트가 중단되지 않도록 ChatOpenAI를 None으로 설정
+    ChatOpenAI = None
 
 # 환경변수 로드
 load_dotenv()
@@ -218,51 +227,79 @@ class EnhancedCarbonRAGAgent:
     def _setup_llms_and_chains(self):
         from prompts.code_generation import code_gen_prompt_template
 
-        """LLM 및 모든 LCEL 체인을 초기화하고 설정합니다."""
+        """사용 가능한 API 키에 따라 LLM 및 모든 LCEL 체인을 초기화하고 설정합니다."""
         try:
-            # 1. 기본 LLM 설정
-            if UPSTAGE_AVAILABLE and os.getenv('UPSTAGE_API_KEY'):
-                self.llm = ChatUpstage(model="solar-mini", temperature=0)
-                print("✅ Upstage LLM 초기화 완료")
-            elif os.getenv('OPENAI_API_KEY'):
-                self.llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0)
-                print("✅ OpenAI LLM 초기화 완료")
+            # 1. API 키 확인
+            upstage_api_key = os.getenv("UPSTAGE_API_KEY")
+            openai_api_key = os.getenv("OPENAI_API_KEY")
+
+            # 2. 기본 LLM 설정
+            if UPSTAGE_AVAILABLE and upstage_api_key:
+                self.llm = ChatUpstage(api_key=upstage_api_key, model="solar-mini", temperature=0)
+                print("✅ EnhancedCarbonRAGAgent: Upstage LLM (solar-mini)을 사용합니다.")
+            elif OPENAI_AVAILABLE and openai_api_key:
+                self.llm = ChatOpenAI(api_key=openai_api_key, model="gpt-4.1-nano", temperature=0)
+                print("✅ EnhancedCarbonRAGAgent: OpenAI LLM (gpt-4.1-nano)을 사용합니다.")
             else:
-                raise ValueError("API 키가 설정되지 않았습니다. .env 파일을 확인해주세요.")
-                
-            # 2. 코드 생성(Code Generation) 체인 설정
-            
-            self.code_generation_chain = code_gen_prompt_template | self.llm | StrOutputParser()
-            print("✅ 코드 생성 체인 초기화 완료")
+                self.llm = None
+                print("⚠️ 경고: 사용 가능한 API 키가 없어 LLM을 초기화할 수 없습니다. .env 파일을 확인해주세요.")
+
+            # 3. 코드 생성(Code Generation) 체인 설정 (LLM이 성공적으로 초기화된 경우에만)
+            if self.llm:
+                self.code_generation_chain = code_gen_prompt_template | self.llm | StrOutputParser()
+                print("✅ 코드 생성 체인 초기화 완료")
+            else:
+                self.code_generation_chain = None
+                print("⚠️ 코드 생성 체인을 초기화할 수 없습니다 (LLM 사용 불가).")
 
         except Exception as e:
             print(f"❌ LLM 및 체인 초기화 실패: {e}")
-            self.llm = None            
-
-
+            self.llm = None
+            self.code_generation_chain = None
+            
     def _generate_code(self, question: str) -> str:
         """질문을 분석하여 Python 코드를 생성 (LCEL 체인 사용)"""
         if not self.code_generation_chain:
+            print("⚠️ 코드 생성 체인이 없어 코드 생성을 건너뜁니다.")
             return None
             
         # 프롬프트에 필요한 정보 준비
-        columns_info = ', '.join(self.df.columns[:10].tolist())
+        columns_info = ', '.join(self.df.columns[:10].tolist()) if self.df is not None else ''
         
         # 데이터소스 정보 생성
-        if '데이터소스' in self.df.columns:
+        if self.df is not None and '데이터소스' in self.df.columns:
             datasources = self.df['데이터소스'].unique()[:5]
             datasource_info = f"- 데이터소스: {', '.join(datasources)}"
         else:
             datasource_info = "- 데이터소스: 통합 탄소 배출량 데이터"
             
         # 연도 정보 생성
-        if '분야 및 연도' in self.df.columns:
-            years = sorted(self.df['분야 및 연도'].dropna().unique())
-            year_info = f"- 연도 범위: {int(years[0])}년 ~ {int(years[-1])}년 (총 {len(years)}개 연도)"
+        if self.df is not None and any(col in self.df.columns for col in self.year_columns):
+            # 사용 가능한 첫 번째 연도 컬럼을 사용
+            year_col_to_use = next((col for col in self.year_columns if col in self.df.columns), None)
+            if year_col_to_use:
+                try:
+                    # 데이터 타입이 숫자일 때만 min/max를 안전하게 계산
+                    if pd.api.types.is_numeric_dtype(self.df[year_col_to_use]):
+                        years = self.df[year_col_to_use].dropna()
+                        if not years.empty:
+                            min_year, max_year = int(years.min()), int(years.max())
+                            year_info = f"- 연도 범위: {min_year}년 ~ {max_year}년"
+                        else:
+                             year_info = "- 연도 정보: 연도 데이터가 비어있음"
+                    else:
+                        # 숫자가 아닌 경우, 고유값 몇 개를 보여줌
+                        unique_years = self.df[year_col_to_use].dropna().unique()[:5]
+                        year_info = f"- 연도 정보 (샘플): {', '.join(map(str, unique_years))}"
+
+                except Exception as e:
+                    year_info = f"- 연도 정보 분석 실패: {e}"
+            else:
+                year_info = "- 연도 정보: 해당 컬럼 없음"
         else:
-            year_info = "- 연도 정보: 다양한 연도의 데이터 포함"
-            
-        sample_data = self.df.head(3).to_string()
+            year_info = "- 연도 정보: 연도 데이터 없음"
+
+        sample_data = self.df.head(3).to_string() if self.df is not None else "데이터 없음"
         
         try:
             # LCEL 체인 호출
@@ -443,7 +480,7 @@ class EnhancedCarbonRAGAgent:
             - 그래프 객체 (matplotlib.figure.Figure)
         """
         if not self.llm:
-            return "❌ LLM이 초기화되지 않았습니다.", None, None, None
+            return "❌ LLM이 초기화되지 않았습니다. API 키를 확인해주세요.", None, None, None
         if self.df is None or self.df.empty:
             return "❌ 데이터가 로드되지 않았습니다.", None, None, None
 
@@ -466,9 +503,11 @@ class EnhancedCarbonRAGAgent:
 
             # 4단계: 문서 기반의 사실적 답변 생성 (DocumentRAGAgent 호출)
             document_based_answer = ""
-            if self.doc_agent:
+            if self.doc_agent and self.doc_agent.rag_chain:
                 print("🤔 문서 기반 답변 조회 중...")
                 document_based_answer = self.doc_agent.ask(question)
+            elif self.doc_agent:
+                 print("⚠️ DocumentRAGAgent는 초기화되었으나 RAG 체인이 없어 문서 검색을 건너뜁니다.")
             else:
                 print("⚠️ DocumentRAGAgent가 초기화되지 않아 문서 기반 답변을 생성할 수 없습니다.")
 

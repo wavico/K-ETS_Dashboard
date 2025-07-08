@@ -30,6 +30,19 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain import hub
 
+# --- LLM 및 임베딩 라이브러리 임포트 ---
+try:
+    from langchain_upstage import UpstageEmbeddings, ChatUpstage
+    UPSTAGE_AVAILABLE = True
+except ImportError:
+    UPSTAGE_AVAILABLE = False
+
+try:
+    from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
 # --- 프로젝트 루트를 sys.path에 추가 ---
 try:
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -122,6 +135,7 @@ class DocumentRAGAgent:
         DocumentRAGAgent를 초기화합니다.
 
         - 환경 변수 로드 및 API 키 검사
+        - LLM 및 임베딩 모델 설정
         - Pinecone 벡터 저장소 설정
         - 로컬 문서('docs' 폴더)와 벡터 저장소 간의 동기화 수행
         - RAG 체인 생성
@@ -132,6 +146,7 @@ class DocumentRAGAgent:
 
         try:
             self._setup_environment()
+            self._setup_llms_and_embeddings()
             self.project_root = self._find_project_root()
             manifest_path = self.project_root / "agent" / "embedding_manifest.json"
             self.manifest_manager = EmbeddingManifestManager(manifest_path, self.index_name)
@@ -147,9 +162,25 @@ class DocumentRAGAgent:
         """환경 변수를 로드하고 API 키의 유효성을 검사합니다."""
         load_dotenv()
         self.upstage_api_key = os.getenv("UPSTAGE_API_KEY")
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
-        if not self.upstage_api_key or not self.pinecone_api_key:
-            raise ValueError("API 키가 .env 파일에 설정되어야 합니다: UPSTAGE_API_KEY, PINECONE_API_KEY")
+        if not (self.upstage_api_key or self.openai_api_key) or not self.pinecone_api_key:
+            raise ValueError("API 키가 .env 파일에 설정되어야 합니다: (UPSTAGE_API_KEY 또는 OPENAI_API_KEY), 그리고 PINECONE_API_KEY")
+
+    def _setup_llms_and_embeddings(self):
+        """사용 가능한 API 키에 따라 LLM과 임베딩 모델, 차원 수를 설정합니다."""
+        if UPSTAGE_AVAILABLE and self.upstage_api_key:
+            print("✅ DocAgent: Upstage API 키를 사용합니다.")
+            self.llm = ChatUpstage(temperature=0)
+            self.embeddings = UpstageEmbeddings(model="embedding-query")
+            self.embedding_dimension = 4096  # Upstage 모델의 임베딩 차원
+        elif OPENAI_AVAILABLE and self.openai_api_key:
+            print("✅ DocAgent: OpenAI API 키를 사용합니다 (Upstage 키 없음).")
+            self.llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0)
+            self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+            self.embedding_dimension = 1536  # text-embedding-3-small 모델의 임베딩 차원
+        else:
+            raise ValueError("LLM 및 임베딩을 위한 API 키가 없습니다. .env 파일을 확인해주세요.")
 
     def _find_project_root(self) -> Path:
         """스크립트 위치를 기반으로 프로젝트 루트 디렉토리를 찾습니다."""
@@ -299,7 +330,7 @@ class DocumentRAGAgent:
             print(f"  - '{self.index_name}' 인덱스가 존재하지 않아 새로 생성합니다.")
             pc.create_index(
                 name=self.index_name,
-                dimension=4096,  # upstage-embedding 모델의 차원
+                dimension=self.embedding_dimension,  # 설정된 임베딩 차원 사용
                 metric="cosine",
                 spec=ServerlessSpec(cloud="aws", region="us-east-1"),
             )
@@ -307,7 +338,7 @@ class DocumentRAGAgent:
         else:
             print(f"  - 기존 '{self.index_name}' 인덱스를 사용합니다.")
         index = pc.Index(self.index_name)
-        vector_store = PineconeVectorStore(index=index, embedding=UpstageEmbeddings(model="embedding-query"))
+        vector_store = PineconeVectorStore(index=index, embedding=self.embeddings)
         print("  - 벡터 저장소 설정 완료.")
         return index, vector_store
 
@@ -386,7 +417,6 @@ class DocumentRAGAgent:
     def _create_rag_chain(self, vectorstore: PineconeVectorStore):
         """LCEL을 사용하여 RAG 체인을 생성합니다."""
         print("\n--- LCEL을 사용하여 RAG 체인 생성 중 ---")
-        llm = ChatUpstage(temperature=0)
         retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
         
         def format_docs(docs):
@@ -395,7 +425,7 @@ class DocumentRAGAgent:
         return (
             {"context": retriever | format_docs, "question": RunnablePassthrough()}
             | RAG_PROMPT_TEMPLATE
-            | llm
+            | self.llm
             | StrOutputParser()
         )
 
@@ -417,6 +447,10 @@ class DocumentRAGAgent:
             answer = self.rag_chain.invoke(question)
             return answer
         except Exception as e:
+            # `self.llm`이 None인 경우에 대한 명시적인 오류 메시지를 추가할 수 있습니다.
+            if not self.llm:
+                print(f"❌ DocumentRAGAgent.ask() 실행 오류: LLM이 초기화되지 않았습니다. ({e})")
+                return "답변을 생성할 수 없습니다. LLM 초기화에 실패했습니다."
             print(f"❌ DocumentRAGAgent.ask() 실행 중 오류 발생: {e}")
             return "답변을 생성하는 동안 오류가 발생했습니다."
 
@@ -428,7 +462,7 @@ if __name__ == "__main__":
     
     try:
         # 1. 에이전트 초기화 (이 과정에서 문서 동기화가 자동으로 수행됩니다)
-        doc_agent = DocumentRAGAgent()
+        doc_agent = DocumentRAGAgent(index_name="carbon-multiagent")
         
         # 2. RAG Q&A 테스트
         if doc_agent.rag_chain:

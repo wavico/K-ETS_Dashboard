@@ -7,6 +7,20 @@ from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
+# --- LLM 라이브러리 임포트 ---
+# 사용 가능한 LLM을 동적으로 확인하고 임포트합니다.
+try:
+    from langchain_upstage import ChatUpstage
+    UPSTAGE_AVAILABLE = True
+except ImportError:
+    UPSTAGE_AVAILABLE = False
+
+try:
+    from langchain_openai import ChatOpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
 # OpenAI API Key 로딩
 load_dotenv()
 
@@ -28,13 +42,20 @@ class ReportTemplateAgent:
     """
     def __init__(self):
         """
-        에이전트를 초기화하고 Upstage 클라이언트를 설정
-        .env 파일에서 UPSTAGE_API_KEY를 로드
+        에이전트를 초기화하고 사용 가능한 API 키에 따라 LLM 클라이언트를 설정합니다.
+        .env 파일에서 UPSTAGE_API_KEY와 OPENAI_API_KEY를 순차적으로 탐색합니다.
         """
-        api_key = os.getenv("UPSTAGE_API_KEY")
-        if not api_key:
-            raise ValueError("환경변수 'UPSTAGE_API_KEY'가 설정되지 않았습니다. .env 파일을 확인해주세요.")
-        self.client = ChatUpstage(api_key=api_key, model="solar-mini", temperature=0.4)
+        upstage_api_key = os.getenv("UPSTAGE_API_KEY")
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+
+        if UPSTAGE_AVAILABLE and upstage_api_key:
+            self.client = ChatUpstage(api_key=upstage_api_key, model="solar-mini", temperature=0.4)
+            print("✅ ReportTemplateAgent: Upstage LLM (solar-mini)을 사용합니다.")
+        elif OPENAI_AVAILABLE and openai_api_key:
+            self.client = ChatOpenAI(api_key=openai_api_key, model="gpt-4.1-nano", temperature=0.4)
+            print("✅ ReportTemplateAgent: OpenAI LLM (gpt-4.1-nano)을 사용합니다.")
+        else:
+            raise ValueError("API 키가 설정되지 않았습니다. .env 파일에서 UPSTAGE_API_KEY 또는 OPENAI_API_KEY를 설정해주세요.")
 
     def generate_report_template(self, topic: str) -> str:
         """
@@ -126,6 +147,9 @@ class ReportTemplateAgent:
         try:
             # 4. LangChain의 `with_structured_output`을 사용하여 JSON 출력을 강제합니다.
             #    Pydantic 모델(StructuredOutline)을 넘겨주어 원하는 출력 구조를 알려줍니다.
+            if not hasattr(self.client, 'with_structured_output'):
+                raise NotImplementedError("현재 LLM 클라이언트는 'with_structured_output'을 지원하지 않습니다.")
+
             structured_llm = self.client.with_structured_output(StructuredOutline)
 
             # 5. 메시지를 LangChain의 표준 객체로 구성합니다.
@@ -159,6 +183,7 @@ if __name__ == '__main__':
             sys.path.insert(0, project_root)
     except Exception as e:
         print(f"경로 추가 중 오류 발생: {e}")
+        project_root = "."
 
 
     print("--- ReportTemplateAgent 기능 테스트 시작 ---")
