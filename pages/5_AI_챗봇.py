@@ -16,7 +16,8 @@ from dotenv import load_dotenv
 try:
     load_dotenv()
     # .env 파일이 없거나 로드에 실패한 경우 경고 메시지 출력
-    if not os.getenv('UPSTAGE_API_KEY'):
+    # if not os.getenv('UPSTAGE_API_KEY'):
+    if not os.getenv('OPENAI_API_KEY'):
         print("⚠️ UPSTAGE_API_KEY가 설정되지 않았습니다. env.example 파일을 참고하여 .env 파일을 생성해주세요.")
 except Exception as e:
     st.error(f"환경변수 로드 중 오류: {e}")

@@ -151,7 +151,6 @@ def process_example_query(query):
     try:
         with st.spinner("분석 중..."):
             response, visualization = agent.ask(query)
-            
             timestamp = datetime.now().strftime("%H:%M")
             if visualization:
                 st.session_state.chat_history.append((query, response, timestamp, visualization))
