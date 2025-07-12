@@ -1,3 +1,4 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Quietseong/K-ETS_Dashboard)
 # 🌍 K-ETS 통합 관리 시스템: AI 보고서 생성 백엔드
 
 본 프로젝트는 사용자가 입력한 '주제'를 기반으로 전문적인 수준의 보고서를 자동으로 생성하는 FastAPI 백엔드 시스템입니다. 템플릿 생성, 구조화된 목차 변환, 데이터 기반의 본문 생성 및 파일 다운로드(DOCX, PDF)까지 보고서 작성의 전 과정을 자동화합니다.
