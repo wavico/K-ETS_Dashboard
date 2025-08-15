@@ -1,5 +1,5 @@
 """
-Streamlit 탄소 데이터 분석 에이전트
+FastAPI용 향상된 탄소 데이터 분석 RAG 에이전트
 """
 
 import os
@@ -10,12 +10,19 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import seaborn as sns
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, List
 from dotenv import load_dotenv
 from matplotlib.ticker import FuncFormatter
 import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+
+# FastAPI 관련 imports
+from app.agents.base_agent import BaseAgent
+from app.models.agent_response import AgentResponse, VisualizationData
+from app.services.document_service import DocumentRAGAgent
 
 # LangChain imports
 try:
@@ -23,7 +30,6 @@ try:
     UPSTAGE_AVAILABLE = True
 except ImportError:
     UPSTAGE_AVAILABLE = False
-    # Upstage 라이브러리가 없어도 스크립트가 중단되지 않도록 ChatUpstage를 None으로 설정
     ChatUpstage = None
 
 try:
@@ -31,54 +37,122 @@ try:
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
-    # OpenAI 라이브러리가 없어도 스크립트가 중단되지 않도록 ChatOpenAI를 None으로 설정
     ChatOpenAI = None
 
 # 환경변수 로드
 load_dotenv()
 
-# --- 프로젝트 루트를 sys.path에 추가 ---
-# 이 스크립트가 다른 모듈(예: doc_agent)을 올바르게 임포트할 수 있도록 프로젝트의 루트 디렉토리를 시스템 경로에 추가합니다.
-# 이렇게 하면 어떤 위치에서 스크립트를 실행하더라도 모듈을 찾는 데 문제가 발생하지 않습니다.
 try:
-    # 현재 파일의 절대 경로를 기준으로 프로젝트 루트를 찾습니다.
-    # 이 스크립트는 'agent' 폴더 안에 있으므로, 부모 디렉토리의 부모 디렉토리가 프로젝트 루트입니다.
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)  # sys.path의 맨 앞에 추가하여 우선순위를 높입니다.
-    from agent.doc_agent import DocumentRAGAgent
-except (ModuleNotFoundError, ImportError):
-    print("⚠️ DocumentRAGAgent 임포트 실패. 일부 기능이 제한될 수 있습니다.")
-    DocumentRAGAgent = None
+    from app.prompts.code_generation import code_gen_prompt_template
+    from app.prompts.interpretation import interpretation_prompt_template
+except ImportError:
+    # 프롬프트 템플릿 기본값
+    code_gen_prompt_template = None
+    interpretation_prompt_template = None
 
-class EnhancedCarbonRAGAgent:
+class EnhancedCarbonRAGAgent(BaseAgent):
+    """향상된 탄소 데이터 분석 RAG 에이전트"""
     
     def __init__(self, data_folder: str = "data"):
         """
         Args:
             data_folder: CSV 파일들이 있는 폴더 경로
         """
+        super().__init__("enhanced_rag")
+        
         self.data_folder = Path(data_folder)
         self.df = None
         self.llm = None
         self.code_generation_chain = None
-        self.doc_agent = None  # 문서 기반 RAG 에이전트를 저장할 속성
+        self.doc_agent = None
+        
         self._setup_korean_font()
         self._load_data()
         self._setup_llms_and_chains()
 
         # DocumentRAGAgent 초기화
-        # 수치 분석 에이전트가 문서 검색 기능도 함께 사용할 수 있도록 내부에 인스턴스를 생성합니다.
-        if DocumentRAGAgent:
-            try:
-                print("\n--- DocumentRAGAgent 초기화 시도 ---")
-                self.doc_agent = DocumentRAGAgent()
-                print("✅ DocumentRAGAgent 초기화 성공")
-            except Exception as e:
-                print(f"⚠️ DocumentRAGAgent 초기화 실패: {e}")
-                self.doc_agent = None
-        else:
-            print("⚠️ DocumentRAGAgent를 사용할 수 없어 관련 기능이 비활성화됩니다.")
+        try:
+            self.doc_agent = DocumentRAGAgent()
+            print("DocumentRAGAgent initialization successful")
+        except Exception as e:
+            print(f"DocumentRAGAgent initialization failed: {e}")
+            self.doc_agent = None
+    
+    async def process(self, message: str, context: Dict[str, Any]) -> AgentResponse:
+        """메시지 처리"""
+        try:
+            # RAG 에이전트로 처리
+            response_text, visualization = self.ask(message)
+            
+            # 시각화 데이터 변환
+            visualizations = []
+            if visualization:
+                # Plotly 차트를 VisualizationData 형식으로 변환
+                viz_data = VisualizationData(
+                    chart_type="plotly",
+                    data=visualization.to_dict() if hasattr(visualization, 'to_dict') else {},
+                    title="데이터 분석 결과",
+                    description="탄소 데이터 분석 시각화"
+                )
+                visualizations.append(viz_data)
+            
+            return AgentResponse(
+                message=response_text,
+                agent_type=self.agent_type,
+                data={"query": message, "context": context},
+                visualizations=visualizations
+            )
+            
+        except Exception as e:
+            return AgentResponse(
+                message=f"분석 중 오류가 발생했습니다: {str(e)}",
+                agent_type=self.agent_type
+            )
+    
+    async def analyze_dashboard_section(self, dashboard_state: Dict) -> Dict[str, Any]:
+        """대시보드 섹션 분석"""
+        try:
+            # 데이터 품질 분석
+            data_quality = await self._assess_data_quality()
+            
+            # 추천사항 생성
+            recommendations = await self._generate_recommendations(data_quality)
+            
+            return {
+                "data_quality": data_quality,
+                "recommendations": recommendations,
+                "insights": ["데이터 분석 완료", "시각화 생성 가능"]
+            }
+            
+        except Exception as e:
+            return {"error": str(e)}
+    
+    async def _assess_data_quality(self) -> Dict[str, Any]:
+        """데이터 품질 평가"""
+        if self.df is None:
+            return {"error": "데이터가 로드되지 않았습니다"}
+        
+        return {
+            "completeness": (1 - self.df.isnull().sum().sum() / (self.df.shape[0] * self.df.shape[1])),
+            "total_rows": len(self.df),
+            "total_columns": len(self.df.columns),
+            "data_types": self.df.dtypes.to_dict()
+        }
+    
+    async def _generate_recommendations(self, data_quality: Dict) -> List[str]:
+        """추천사항 생성"""
+        recommendations = []
+        
+        if data_quality.get("completeness", 0) < 0.95:
+            recommendations.append("데이터 품질 개선이 필요합니다")
+        
+        recommendations.extend([
+            "정기적인 데이터 업데이트 권장",
+            "추가 데이터 소스 연계 검토",
+            "데이터 검증 프로세스 강화"
+        ])
+        
+        return recommendations
     
     def _setup_korean_font(self):
         """한글 폰트 설정"""
@@ -98,10 +172,10 @@ class EnhancedCarbonRAGAgent:
                     # Seaborn 스타일 설정
                     sns.set_style("whitegrid")
                     sns.set_palette("husl")
-                    print(f"✅ 한글 폰트 설정 성공: {font_prop.get_name()}")
+                    print(f"Korean font setup success: {font_prop.get_name()}")
                     break
         except Exception as e:
-            print(f"⚠️ 한글 폰트 설정 실패: {e}")
+            print(f"Korean font setup failed: {e}")
     
     def _load_data(self):
         """CSV 파일들을 로드하여 통합 DataFrame 생성"""
@@ -125,17 +199,17 @@ class EnhancedCarbonRAGAgent:
                             df = pd.read_csv(filepath, encoding=encoding, low_memory=False)
                             df['데이터소스'] = filename
                             dataframes.append(df)
-                            print(f"✅ 로드 성공: {filename} ({df.shape})")
+                            print(f"Loaded successfully: {filename} ({df.shape})")
                             break
                         except UnicodeDecodeError:
                             continue
                     else:
-                        print(f"❌ 로드 실패: {filename}")
+                        print(f"Failed to load: {filename}")
             
             # 통합 DataFrame 생성
             if dataframes:
                 self.df = pd.concat(dataframes, ignore_index=True, sort=False)
-                print(f"📊 통합 데이터: {self.df.shape}")
+                print(f"Integrated data: {self.df.shape}")
                 
                 # 데이터 타입 분석 및 최적화
                 self._analyze_and_optimize_data()
@@ -156,7 +230,7 @@ class EnhancedCarbonRAGAgent:
                 self._analyze_and_optimize_data()
                 
         except Exception as e:
-            print(f"❌ 데이터 로드 오류: {e}")
+            print(f"Data loading error: {e}")
             # 빈 DataFrame으로 초기화
             self.df = pd.DataFrame()
     
@@ -194,40 +268,50 @@ class EnhancedCarbonRAGAgent:
                                 # 소수점 제거하여 정수로 변환
                                 self.df[col] = self.df[col].astype('Int64')
                                 self.column_types[col] = 'numeric_year'
-                                print(f"✅ 연도 컬럼 '{col}' 정수로 변환 완료")
+                                print(f"Year column '{col}' converted to integer")
                             else:
                                 self.column_types[col] = 'string_year'
-                                print(f"⚠️ 연도 컬럼 '{col}' 문자열로 유지")
+                                print(f"Year column '{col}' kept as string")
                         else:
                             # 숫자 타입인 경우 소수점 제거
                             try:
                                 # float 타입인 경우 정수로 변환
                                 if self.df[col].dtype in ['float64', 'float32']:
                                     self.df[col] = self.df[col].astype('Int64')
-                                    print(f"✅ 연도 컬럼 '{col}' 소수점 제거하여 정수로 변환 완료")
+                                    print(f"Year column '{col}' converted to integer by removing decimal")
                                 else:
-                                    print(f"✅ 연도 컬럼 '{col}' 이미 정수 타입")
+                                    print(f"Year column '{col}' already integer type")
                                 self.column_types[col] = 'numeric_year'
                             except Exception as conv_error:
-                                print(f"⚠️ 연도 컬럼 '{col}' 정수 변환 실패: {conv_error}")
+                                print(f"Year column '{col}' integer conversion failed: {conv_error}")
                                 self.column_types[col] = 'numeric_year'
                             
                 except Exception as e:
                     self.column_types[col] = 'unknown_year'
-                    print(f"⚠️ 연도 컬럼 '{col}' 타입 분석 실패: {e}")
+                    print(f"Year column '{col}' type analysis failed: {e}")
             
             # 기타 컬럼 타입 저장
             elif col not in self.column_types:
                 dtype = str(self.df[col].dtype)
                 self.column_types[col] = dtype
         
-        print(f"📊 연도 컬럼 발견: {self.year_columns}")
-        print(f"📊 컬럼 타입 정보: {len(self.column_types)}개 컬럼 분석 완료")
+        print(f"Year columns found: {self.year_columns}")
+        print(f"Column type info: {len(self.column_types)} columns analyzed")
     
     def _setup_llms_and_chains(self):
-        from prompts.code_generation import code_gen_prompt_template
-
         """사용 가능한 API 키에 따라 LLM 및 모든 LCEL 체인을 초기화하고 설정합니다."""
+        try:
+            from prompts.code_generation import code_gen_prompt_template
+        except ImportError:
+            # Fallback to default prompt if prompts module is not available
+            from langchain_core.prompts import PromptTemplate
+            code_gen_prompt_template = PromptTemplate.from_template(
+                "You are a Python data analysis expert. Generate Python code to analyze the given data.\n"
+                "Data columns: {columns}\n"
+                "User request: {query}\n"
+                "Generate only the Python code without explanations:"
+            )
+        
         try:
             # 1. API 키 확인
             upstage_api_key = os.getenv("UPSTAGE_API_KEY")
@@ -236,10 +320,10 @@ class EnhancedCarbonRAGAgent:
             # 2. 기본 LLM 설정
             if UPSTAGE_AVAILABLE and upstage_api_key:
                 self.llm = ChatUpstage(api_key=upstage_api_key, model="solar-mini", temperature=0)
-                print("✅ EnhancedCarbonRAGAgent: Upstage LLM (solar-mini)을 사용합니다.")
+                print("EnhancedCarbonRAGAgent: Using Upstage LLM (solar-mini)")
             elif OPENAI_AVAILABLE and openai_api_key:
                 self.llm = ChatOpenAI(api_key=openai_api_key, model="gpt-4.1-nano", temperature=0)
-                print("✅ EnhancedCarbonRAGAgent: OpenAI LLM (gpt-4.1-nano)을 사용합니다.")
+                print("EnhancedCarbonRAGAgent: Using OpenAI LLM (gpt-4.1-nano)")
             else:
                 self.llm = None
                 print("⚠️ 경고: 사용 가능한 API 키가 없어 LLM을 초기화할 수 없습니다. .env 파일을 확인해주세요.")
@@ -247,13 +331,13 @@ class EnhancedCarbonRAGAgent:
             # 3. 코드 생성(Code Generation) 체인 설정 (LLM이 성공적으로 초기화된 경우에만)
             if self.llm:
                 self.code_generation_chain = code_gen_prompt_template | self.llm | StrOutputParser()
-                print("✅ 코드 생성 체인 초기화 완료")
+                print("Code generation chain initialization complete")
             else:
                 self.code_generation_chain = None
                 print("⚠️ 코드 생성 체인을 초기화할 수 없습니다 (LLM 사용 불가).")
 
         except Exception as e:
-            print(f"❌ LLM 및 체인 초기화 실패: {e}")
+            print(f"LLM and chain initialization failed: {e}")
             self.llm = None
             self.code_generation_chain = None
             
@@ -332,7 +416,7 @@ class EnhancedCarbonRAGAgent:
             return code.strip()
     
         except Exception as e:
-            print(f"❌ 코드 생성 실패: {e}")
+            print(f"Code generation failed: {e}")
             return None
         
     def _execute_code(self, code: str) -> Tuple[str, bool, Optional[pd.DataFrame], Optional[object], Dict[str, Any]]:
@@ -440,20 +524,20 @@ class EnhancedCarbonRAGAgent:
                     figure_obj = plt.gcf()
                     # figure가 비어있지 않은지 확인
                     if figure_obj.get_axes():
-                        print(f"✅ 그래프 생성됨: figure 객체 추출 완료")
+                        print(f"Graph created: figure object extracted")
                     else:
                         figure_obj = None
                         has_plot = False
                 except Exception as e:
-                    print(f"⚠️ 그래프 객체 추출 실패: {e}")
+                    print(f"Graph object extraction failed: {e}")
                     figure_obj = None
                     has_plot = False
             
             # 디버깅 정보
             if has_plot:
-                print(f"✅ 그래프 생성됨: {figs_before} -> {figs_after}")
+                print(f"Graph created: {figs_before} -> {figs_after}")
             if table_result is not None:
-                print(f"✅ 테이블 생성됨: {table_result.shape}")
+                print(f"Table created: {table_result.shape}")
             
             return str(result), has_plot, table_result, figure_obj, namespace
             
