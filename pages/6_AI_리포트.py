@@ -37,8 +37,22 @@ st.markdown('<h1 class="main-header">📄 AI 기반 보고서 생성기</h1>', u
 
 # API 키 로딩
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+
+# vLLM 설정 확인
+use_vllm = os.getenv("USE_VLLM", "true").lower() == "true"
+vllm_base_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+
+if use_vllm:
+    # vLLM 사용 시
+    client = OpenAI(
+        base_url=vllm_base_url,
+        api_key="EMPTY"  # vLLM은 API 키 불필요
+    )
+    os.environ["OPENAI_API_KEY"] = "EMPTY"
+else:
+    # 기존 OpenAI API 사용
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
 pinecone_api_key = os.getenv("PINECONE_API_KEY")
 index_name = "carbone-index"
@@ -61,8 +75,9 @@ def extract_table_of_contents(text):
 다음 문서에서 **목차(차례)**에 해당하는 부분만 정확히 추출해 주세요.
 {text[:4000]}
 """
+    model_name = os.getenv("VLLM_MODEL_NAME", "gpt-4-turbo") if use_vllm else "gpt-4-turbo"
     response = client.chat.completions.create(
-        model="gpt-4-turbo",
+        model=model_name,
         messages=[
             {"role": "system", "content": "당신은 문서 구조에서 목차만 정확히 추출하는 AI입니다."},
             {"role": "user", "content": prompt}
@@ -77,8 +92,9 @@ def summarize_template_structure(text):
 다음 문서의 형식(보고서 구조, 제목 스타일, 구성 흐름 등)을 간단히 요약해 주세요.
 {text[:4000]}
 """
+    model_name = os.getenv("VLLM_MODEL_NAME", "gpt-4-turbo") if use_vllm else "gpt-4-turbo"
     response = client.chat.completions.create(
-        model="gpt-4-turbo",
+        model=model_name,
         messages=[
             {"role": "system", "content": "당신은 문서 형식을 분석하고 요약하는 AI입니다."},
             {"role": "user", "content": prompt}
@@ -122,7 +138,18 @@ def retrieve_similar_docs(topic, index, embeddings_model, top_k=5):
 
 # 보고서 생성
 def generate_report_with_rag(topic, index, custom_outline=None):
-    llm = ChatOpenAI(temperature=0.7, model_name="gpt-4-turbo")
+    model_name = os.getenv("VLLM_MODEL_NAME", "gpt-4-turbo") if use_vllm else "gpt-4-turbo"
+
+    if use_vllm:
+        llm = ChatOpenAI(
+            base_url=vllm_base_url,
+            api_key="EMPTY",
+            temperature=0.7,
+            model_name=model_name
+        )
+    else:
+        llm = ChatOpenAI(temperature=0.7, model_name="gpt-4-turbo")
+
     embeddings_model = OpenAIEmbeddings()
     docs = retrieve_similar_docs(topic, index, embeddings_model)
     context = "\n\n".join(docs[:5])

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 try:
     from prophet import Prophet
@@ -53,30 +54,49 @@ class ProphetService:
             for encoding in ['cp949', 'euc-kr', 'utf-8', 'utf-8-sig']:
                 try:
                     df = pd.read_csv(filepath, encoding=encoding)
-                    
-                    # 컬럼명 정리 (한글이 깨진 경우 영문으로 매핑)
-                    if len(df.columns) >= 9:
+
+                    # 컬럼명을 영문으로 매핑
+                    col_mapping = {
+                        '년': 'year',
+                        '월': 'month',
+                        '일': 'day',
+                        '설비용량(MW)': 'supply_capacity',
+                        '공급능력(MW)': 'demand_capacity',
+                        '최대전력(MW)': 'max_demand',
+                        '공급예비력(MW)': 'reserve_capacity',
+                        '공급예비율(%)': 'reserve_rate',
+                        '최대전력기준일시': 'max_demand_time'
+                    }
+
+                    # 컬럼명이 한글이면 매핑, 아니면 그대로 유지
+                    if df.columns[0] in col_mapping:
+                        df = df.rename(columns=col_mapping)
+                    elif len(df.columns) >= 9:
+                        # 한글이 깨진 경우 순서대로 매핑
                         df.columns = [
                             'year', 'month', 'day', 'supply_capacity',
-                            'demand_capacity', 'max_demand', 'reserve_capacity', 
+                            'demand_capacity', 'max_demand', 'reserve_capacity',
                             'reserve_rate', 'max_demand_time'
                         ]
-                    
-                    # 날짜 컬럼 생성
-                    df['date'] = pd.to_datetime(df[['year', 'month', 'day']])
-                    
+
+                    # 날짜 컬럼 생성 (각 컬럼을 문자열로 결합 후 변환)
+                    df['date_str'] = (df['year'].astype(str) + '-' +
+                                      df['month'].astype(str).str.zfill(2) + '-' +
+                                      df['day'].astype(str).str.zfill(2))
+                    df['date'] = pd.to_datetime(df['date_str'], format='%Y-%m-%d', errors='coerce')
+
                     # Prophet 형식으로 변환 (ds: 날짜, y: 예측 대상)
                     self.df = df[['date', 'max_demand']].copy()
                     self.df.columns = ['ds', 'y']
                     self.df = self.df.sort_values('ds').reset_index(drop=True)
-                    
+
                     # 결측값 처리
                     self.df = self.df.dropna()
-                    
+
                     logger.info(f"전력수급 데이터 로드 완료: {self.df.shape}, 인코딩: {encoding}")
                     logger.info(f"데이터 기간: {self.df['ds'].min()} ~ {self.df['ds'].max()}")
                     break
-                    
+
                 except UnicodeDecodeError:
                     continue
                 except Exception as e:
@@ -151,27 +171,12 @@ class ProphetService:
             
             self.model = Prophet(**model_params)
             
-            # 한국 공휴일 추가 (간단한 버전)
-            holidays = pd.DataFrame({
-                'holiday': 'korean_holiday',
-                'ds': pd.to_datetime([
-                    '2024-01-01', '2024-02-10', '2024-03-01', '2024-05-05',
-                    '2024-06-06', '2024-08-15', '2024-10-03', '2024-12-25',
-                    '2025-01-01', '2025-02-29', '2025-03-01', '2025-05-05',
-                    '2025-06-06', '2025-08-15', '2025-10-03', '2025-12-25'
-                ]),
-                'lower_window': 0,
-                'upper_window': 1,
-            })
-            
-            # 데이터 범위 내 공휴일만 필터링
-            holidays = holidays[
-                (holidays['ds'] >= self.df['ds'].min()) & 
-                (holidays['ds'] <= self.df['ds'].max())
-            ]
-            
-            if not holidays.empty:
+            # 한국 공휴일 추가 (Prophet 내장 기능 사용)
+            try:
                 self.model.add_country_holidays(country_name='KR')
+                logger.info("한국 공휴일 추가 완료")
+            except Exception as e:
+                logger.warning(f"공휴일 추가 실패 (무시하고 계속 진행): {e}")
             
             # 모델 학습
             logger.info("Prophet 모델 학습 시작...")
@@ -373,12 +378,282 @@ class ProphetService:
             logger.error(f"모델 정보 생성 실패: {e}")
             return {"error": f"모델 정보 생성 실패: {str(e)}"}
     
+    def evaluate_model(self, test_size: float = 0.2) -> Dict[str, Any]:
+        """
+        모델 성능 평가 (학습 데이터의 일부를 테스트용으로 분리)
+
+        Args:
+            test_size: 테스트 데이터 비율 (0~1)
+
+        Returns:
+            성능 지표 딕셔너리
+        """
+        if not self.is_model_fitted or self.df is None:
+            logger.error("모델이 학습되지 않았거나 데이터가 없습니다")
+            return {"error": "모델이 학습되지 않았습니다"}
+
+        try:
+            # 데이터 분할
+            split_idx = int(len(self.df) * (1 - test_size))
+            train_df = self.df[:split_idx].copy()
+            test_df = self.df[split_idx:].copy()
+
+            logger.info(f"학습 데이터: {len(train_df)}개, 테스트 데이터: {len(test_df)}개")
+
+            # 새 모델로 학습
+            test_model = Prophet(
+                yearly_seasonality=True,
+                weekly_seasonality=True,
+                daily_seasonality=False,
+                seasonality_mode='multiplicative',
+                changepoint_prior_scale=0.01,
+                seasonality_prior_scale=10.0
+            )
+            test_model.fit(train_df)
+
+            # 테스트 기간 예측
+            future = test_model.make_future_dataframe(periods=len(test_df), freq='D')
+            forecast = test_model.predict(future)
+
+            # 테스트 데이터에 해당하는 예측값 추출
+            forecast_test = forecast.tail(len(test_df))
+
+            # 실제값과 예측값 병합
+            test_actual = test_df['y'].values
+            test_predicted = forecast_test['yhat'].values
+
+            # 성능 지표 계산
+            mae = mean_absolute_error(test_actual, test_predicted)
+            rmse = np.sqrt(mean_squared_error(test_actual, test_predicted))
+            mape = np.mean(np.abs((test_actual - test_predicted) / test_actual)) * 100
+            r2 = r2_score(test_actual, test_predicted)
+
+            # 신뢰구간 내 포함 비율
+            in_interval = np.sum(
+                (test_actual >= forecast_test['yhat_lower'].values) &
+                (test_actual <= forecast_test['yhat_upper'].values)
+            )
+            coverage = (in_interval / len(test_actual)) * 100
+
+            return {
+                "metrics": {
+                    "MAE": round(mae, 2),
+                    "RMSE": round(rmse, 2),
+                    "MAPE": round(mape, 2),
+                    "R2_Score": round(r2, 4),
+                    "Coverage": round(coverage, 2)
+                },
+                "data_split": {
+                    "train_size": len(train_df),
+                    "test_size": len(test_df),
+                    "test_ratio": test_size
+                },
+                "test_period": {
+                    "start": test_df['ds'].min().strftime('%Y-%m-%d'),
+                    "end": test_df['ds'].max().strftime('%Y-%m-%d')
+                },
+                "actual_vs_predicted": {
+                    "dates": test_df['ds'].dt.strftime('%Y-%m-%d').tolist(),
+                    "actual": test_actual.tolist(),
+                    "predicted": test_predicted.tolist(),
+                    "lower_bound": forecast_test['yhat_lower'].tolist(),
+                    "upper_bound": forecast_test['yhat_upper'].tolist()
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"모델 평가 실패: {e}")
+            return {"error": f"모델 평가 실패: {str(e)}"}
+
+    def cross_validate_model(self, initial_days: int = 365, period_days: int = 30,
+                           horizon_days: int = 30) -> Dict[str, Any]:
+        """
+        교차 검증을 통한 모델 성능 평가
+
+        Args:
+            initial_days: 초기 학습 기간 (일)
+            period_days: 검증 간격 (일)
+            horizon_days: 예측 기간 (일)
+
+        Returns:
+            교차 검증 결과
+        """
+        if not PROPHET_AVAILABLE:
+            return {"error": "Prophet 라이브러리가 설치되지 않았습니다"}
+
+        if not self.is_model_fitted or self.df is None:
+            logger.error("모델이 학습되지 않았거나 데이터가 없습니다")
+            return {"error": "모델이 학습되지 않았습니다"}
+
+        try:
+            from prophet.diagnostics import cross_validation, performance_metrics
+
+            logger.info("교차 검증 수행 중...")
+
+            # 교차 검증 수행
+            df_cv = cross_validation(
+                self.model,
+                initial=f'{initial_days} days',
+                period=f'{period_days} days',
+                horizon=f'{horizon_days} days'
+            )
+
+            # 성능 지표 계산
+            df_p = performance_metrics(df_cv)
+
+            # 평균 성능 지표
+            avg_metrics = {
+                "MAE": round(df_p['mae'].mean(), 2),
+                "RMSE": round(df_p['rmse'].mean(), 2),
+                "MAPE": round(df_p['mape'].mean() * 100, 2),
+                "Coverage": round(df_p['coverage'].mean() * 100, 2)
+            }
+
+            return {
+                "average_metrics": avg_metrics,
+                "detailed_metrics": df_p.to_dict('records'),
+                "cv_params": {
+                    "initial_days": initial_days,
+                    "period_days": period_days,
+                    "horizon_days": horizon_days
+                },
+                "num_folds": len(df_cv['cutoff'].unique())
+            }
+
+        except Exception as e:
+            logger.error(f"교차 검증 실패: {e}")
+            return {"error": f"교차 검증 실패: {str(e)}"}
+
+    def create_evaluation_plot(self, evaluation_result: Dict[str, Any]) -> Optional[go.Figure]:
+        """
+        평가 결과 시각화
+
+        Args:
+            evaluation_result: evaluate_model() 결과
+
+        Returns:
+            Plotly Figure
+        """
+        if "error" in evaluation_result or "actual_vs_predicted" not in evaluation_result:
+            return None
+
+        try:
+            data = evaluation_result["actual_vs_predicted"]
+            dates = pd.to_datetime(data["dates"])
+
+            fig = make_subplots(
+                rows=2, cols=1,
+                subplot_titles=('실제값 vs 예측값', '예측 오차'),
+                vertical_spacing=0.15,
+                row_heights=[0.7, 0.3]
+            )
+
+            # 실제값
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=data["actual"],
+                    mode='lines+markers',
+                    name='실제값',
+                    line=dict(color='blue', width=2),
+                    marker=dict(size=6)
+                ),
+                row=1, col=1
+            )
+
+            # 예측값
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=data["predicted"],
+                    mode='lines+markers',
+                    name='예측값',
+                    line=dict(color='red', width=2, dash='dash'),
+                    marker=dict(size=6)
+                ),
+                row=1, col=1
+            )
+
+            # 신뢰구간
+            upper = data["upper_bound"]
+            lower = data["lower_bound"][::-1]
+            dates_reversed = dates[::-1]
+
+            fig.add_trace(
+                go.Scatter(
+                    x=dates.tolist() + dates_reversed.tolist(),
+                    y=upper + lower,
+                    fill='toself',
+                    fillcolor='rgba(255,0,0,0.1)',
+                    line=dict(color='rgba(255,255,255,0)'),
+                    name='95% 신뢰구간',
+                    showlegend=True
+                ),
+                row=1, col=1
+            )
+
+            # 오차
+            errors = np.array(data["actual"]) - np.array(data["predicted"])
+            fig.add_trace(
+                go.Bar(
+                    x=dates,
+                    y=errors,
+                    name='예측 오차',
+                    marker=dict(
+                        color=errors,
+                        colorscale='RdYlGn_r',
+                        showscale=True,
+                        colorbar=dict(title="오차", x=1.1)
+                    )
+                ),
+                row=2, col=1
+            )
+
+            # 성능 지표 표시
+            metrics = evaluation_result.get("metrics", {})
+            annotation_text = (
+                f"MAE: {metrics.get('MAE', 0):,.0f}<br>"
+                f"RMSE: {metrics.get('RMSE', 0):,.0f}<br>"
+                f"MAPE: {metrics.get('MAPE', 0):.2f}%<br>"
+                f"R²: {metrics.get('R2_Score', 0):.4f}<br>"
+                f"Coverage: {metrics.get('Coverage', 0):.1f}%"
+            )
+
+            fig.add_annotation(
+                text=annotation_text,
+                xref="paper", yref="paper",
+                x=0.02, y=0.98,
+                showarrow=False,
+                bgcolor="rgba(255,255,255,0.8)",
+                bordercolor="black",
+                borderwidth=1,
+                font=dict(size=10)
+            )
+
+            # 레이아웃 설정
+            fig.update_layout(
+                title='모델 성능 평가 결과',
+                height=800,
+                showlegend=True,
+                template='plotly_white'
+            )
+
+            fig.update_xaxes(title_text='날짜', row=2, col=1)
+            fig.update_yaxes(title_text='최대수요 (MW)', row=1, col=1)
+            fig.update_yaxes(title_text='오차 (MW)', row=2, col=1)
+
+            return fig
+
+        except Exception as e:
+            logger.error(f"평가 시각화 생성 실패: {e}")
+            return None
+
     def predict_from_query(self, query: str) -> Dict[str, Any]:
         """자연어 질의에 따른 예측"""
         try:
             # 질의에서 예측 기간 추출
             periods = 30  # 기본값
-            
+
             if '주' in query or 'week' in query.lower():
                 if '1주' in query or '1 주' in query:
                     periods = 7
@@ -398,21 +673,21 @@ class ProphetService:
                 numbers = re.findall(r'\d+', query)
                 if numbers:
                     periods = min(int(numbers[0]), 365)  # 최대 1년
-            
+
             # 예측 수행
             forecast_df = self.predict(periods=periods)
             if forecast_df is None:
                 return {"error": "예측 수행에 실패했습니다"}
-            
+
             # 요약 정보
             summary = self.get_forecast_summary(periods=periods)
-            
+
             # 시각화
             chart = self.create_forecast_plot(periods=periods)
-            
+
             # 모델 정보
             model_info = self.get_model_info()
-            
+
             return {
                 "query": query,
                 "periods": periods,
@@ -422,7 +697,7 @@ class ProphetService:
                 "model_info": model_info,
                 "success": True
             }
-            
+
         except Exception as e:
             logger.error(f"질의 기반 예측 실패: {e}")
             return {

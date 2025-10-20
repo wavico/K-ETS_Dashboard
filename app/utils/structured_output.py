@@ -43,19 +43,31 @@ class ReportTemplateAgent:
     def __init__(self):
         """
         에이전트를 초기화하고 사용 가능한 API 키에 따라 LLM 클라이언트를 설정합니다.
-        .env 파일에서 UPSTAGE_API_KEY와 OPENAI_API_KEY를 순차적으로 탐색합니다.
+        .env 파일에서 USE_VLLM, UPSTAGE_API_KEY, OPENAI_API_KEY를 순차적으로 탐색합니다.
         """
+        use_vllm = os.getenv("USE_VLLM", "true").lower() == "true"
+        vllm_base_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+        vllm_model_name = os.getenv("VLLM_MODEL_NAME", "gpt-4-turbo")
         upstage_api_key = os.getenv("UPSTAGE_API_KEY")
         openai_api_key = os.getenv("OPENAI_API_KEY")
 
-        if UPSTAGE_AVAILABLE and upstage_api_key:
+        if use_vllm and OPENAI_AVAILABLE:
+            # vLLM은 OpenAI 호환 API를 사용하므로 ChatOpenAI를 사용
+            self.client = ChatOpenAI(
+                base_url=vllm_base_url,
+                api_key="EMPTY",  # vLLM은 API 키 불필요
+                model=vllm_model_name,
+                temperature=0.4
+            )
+            print(f"✅ ReportTemplateAgent: vLLM ({vllm_base_url})을 사용합니다.")
+        elif UPSTAGE_AVAILABLE and upstage_api_key:
             self.client = ChatUpstage(api_key=upstage_api_key, model="solar-mini", temperature=0.4)
             print("✅ ReportTemplateAgent: Upstage LLM (solar-mini)을 사용합니다.")
         elif OPENAI_AVAILABLE and openai_api_key:
             self.client = ChatOpenAI(api_key=openai_api_key, model="gpt-4.1-nano", temperature=0.4)
             print("✅ ReportTemplateAgent: OpenAI LLM (gpt-4.1-nano)을 사용합니다.")
         else:
-            raise ValueError("API 키가 설정되지 않았습니다. .env 파일에서 UPSTAGE_API_KEY 또는 OPENAI_API_KEY를 설정해주세요.")
+            raise ValueError("API 키가 설정되지 않았거나 vLLM 서버가 실행되지 않았습니다. .env 파일을 확인해주세요.")
 
     def generate_report_template(self, topic: str) -> str:
         """

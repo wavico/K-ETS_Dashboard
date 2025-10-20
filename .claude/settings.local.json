@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venv\\Scripts\\python.exe -m pip install:*)",
+      "Bash(./venv/Scripts/python.exe -m pip install:*)",
+      "Bash(./venv/Scripts/python.exe test_prophet_evaluation.py:*)",
+      "Bash(./venv/Scripts/python.exe:*)",
+      "WebSearch",
+      "Bash(copy .env.example .env)",
+      "Bash(export VLLM_USE_TRITON_FLASH_ATTN=0)",
+      "Bash(./venv/Scripts/vllm.exe serve Qwen/Qwen3-30B-A3B-Instruct-2507 --host 0.0.0.0 --port 8000 --served-model-name gpt-4-turbo --trust-remote-code)",
+      "Bash(wsl --list --verbose)",
+      "Bash(wsl -d Ubuntu bash -c \"python3 --version && nvidia-smi\")",
+      "Bash(wsl -d Ubuntu bash -c \"pip3 install --upgrade pip && pip3 install ''vllm>=0.8.4'' --no-cache-dir\")",
+      "Bash(wsl -d Ubuntu bash -c \"cd ~ && python3 -m venv vllm_env && source vllm_env/bin/activate && pip install --upgrade pip && pip install ''vllm>=0.8.4''\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

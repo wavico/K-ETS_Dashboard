@@ -313,12 +313,23 @@ class EnhancedCarbonRAGAgent(BaseAgent):
             )
         
         try:
-            # 1. API 키 확인
+            # 1. API 키 및 vLLM 설정 확인
+            use_vllm = os.getenv("USE_VLLM", "true").lower() == "true"
+            vllm_base_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+            vllm_model_name = os.getenv("VLLM_MODEL_NAME", "gpt-4-turbo")
             upstage_api_key = os.getenv("UPSTAGE_API_KEY")
             openai_api_key = os.getenv("OPENAI_API_KEY")
 
-            # 2. 기본 LLM 설정
-            if UPSTAGE_AVAILABLE and upstage_api_key:
+            # 2. 기본 LLM 설정 (vLLM 우선)
+            if use_vllm and OPENAI_AVAILABLE:
+                self.llm = ChatOpenAI(
+                    base_url=vllm_base_url,
+                    api_key="EMPTY",
+                    model=vllm_model_name,
+                    temperature=0
+                )
+                print(f"EnhancedCarbonRAGAgent: Using vLLM ({vllm_base_url})")
+            elif UPSTAGE_AVAILABLE and upstage_api_key:
                 self.llm = ChatUpstage(api_key=upstage_api_key, model="solar-mini", temperature=0)
                 print("EnhancedCarbonRAGAgent: Using Upstage LLM (solar-mini)")
             elif OPENAI_AVAILABLE and openai_api_key:
@@ -326,7 +337,7 @@ class EnhancedCarbonRAGAgent(BaseAgent):
                 print("EnhancedCarbonRAGAgent: Using OpenAI LLM (gpt-4.1-nano)")
             else:
                 self.llm = None
-                print("⚠️ 경고: 사용 가능한 API 키가 없어 LLM을 초기화할 수 없습니다. .env 파일을 확인해주세요.")
+                print("⚠️ 경고: 사용 가능한 API 키가 없거나 vLLM 서버가 실행되지 않았습니다. .env 파일을 확인해주세요.")
 
             # 3. 코드 생성(Code Generation) 체인 설정 (LLM이 성공적으로 초기화된 경우에만)
             if self.llm:

@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = Field(default="", env="OPENAI_API_KEY")
     OPENAI_MODEL: str = Field(default="gpt-3.5-turbo", env="OPENAI_MODEL")
     UPSTAGE_API_KEY: str = Field(default="", env="UPSTAGE_API_KEY")
+
+    # vLLM 설정
+    USE_VLLM: bool = Field(default=True, env="USE_VLLM")
+    VLLM_BASE_URL: str = Field(default="http://localhost:8000/v1", env="VLLM_BASE_URL")
+    VLLM_MODEL_NAME: str = Field(default="gpt-4-turbo", env="VLLM_MODEL_NAME")  # vLLM에서 served-model-name
+    VLLM_API_KEY: str = Field(default="EMPTY", env="VLLM_API_KEY")  # vLLM은 API 키 불필요
     
     # 로깅 설정
     LOG_LEVEL: str = Field(default="INFO", env="LOG_LEVEL")

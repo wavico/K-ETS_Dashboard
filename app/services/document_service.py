@@ -177,18 +177,43 @@ class DocumentRAGAgent:
     def _setup_environment(self):
         """환경 변수를 로드하고 API 키의 유효성을 검사합니다."""
         load_dotenv()
+        self.use_vllm = os.getenv("USE_VLLM", "true").lower() == "true"
+        self.vllm_base_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+        self.vllm_model_name = os.getenv("VLLM_MODEL_NAME", "gpt-4-turbo")
         self.upstage_api_key = os.getenv("UPSTAGE_API_KEY")
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        
-        # LLM API 키는 필수
-        if not (self.upstage_api_key or self.openai_api_key):
-            raise ValueError("LLM API 키가 .env 파일에 설정되어야 합니다: (UPSTAGE_API_KEY 또는 OPENAI_API_KEY)")
-        
-        print("LLM API 키 설정 완료. Pinecone 없이 기본 기능만 사용합니다.")
+
+        # vLLM 또는 LLM API 키는 필수
+        if not (self.use_vllm or self.upstage_api_key or self.openai_api_key):
+            raise ValueError("vLLM 서버가 실행되지 않았거나 LLM API 키가 .env 파일에 설정되어야 합니다.")
+
+        print("LLM 설정 완료. Pinecone 없이 기본 기능만 사용합니다.")
 
     def _setup_llms_and_embeddings(self):
         """사용 가능한 API 키에 따라 LLM과 임베딩 모델, 차원 수를 설정합니다."""
-        if UPSTAGE_AVAILABLE and self.upstage_api_key:
+        if self.use_vllm and OPENAI_AVAILABLE:
+            print(f"DocAgent: vLLM ({self.vllm_base_url})을 사용합니다.")
+            self.llm = ChatOpenAI(
+                base_url=self.vllm_base_url,
+                api_key="EMPTY",
+                model=self.vllm_model_name,
+                temperature=0
+            )
+            # vLLM 사용 시에도 임베딩은 외부 API 사용 (Upstage 또는 OpenAI)
+            if UPSTAGE_AVAILABLE and self.upstage_api_key:
+                self.embeddings = UpstageEmbeddings(model="embedding-query")
+                self.embedding_dimension = 4096
+                print("DocAgent: Upstage 임베딩을 사용합니다.")
+            elif OPENAI_AVAILABLE and self.openai_api_key:
+                self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+                self.embedding_dimension = 1536
+                print("DocAgent: OpenAI 임베딩을 사용합니다.")
+            else:
+                # 임베딩이 없으면 기본 LLM 기능만 사용
+                self.embeddings = None
+                self.embedding_dimension = 0
+                print("DocAgent: 임베딩 없이 기본 LLM 기능만 사용합니다.")
+        elif UPSTAGE_AVAILABLE and self.upstage_api_key:
             print("DocAgent: Upstage API 키를 사용합니다.")
             self.llm = ChatUpstage(temperature=0)
             self.embeddings = UpstageEmbeddings(model="embedding-query")
@@ -199,7 +224,7 @@ class DocumentRAGAgent:
             self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
             self.embedding_dimension = 1536  # text-embedding-3-small 모델의 임베딩 차원
         else:
-            raise ValueError("LLM 및 임베딩을 위한 API 키가 없습니다. .env 파일을 확인해주세요.")
+            raise ValueError("LLM 및 임베딩을 위한 API 키가 없거나 vLLM 서버가 실행되지 않았습니다. .env 파일을 확인해주세요.")
 
     def _find_project_root(self) -> Path:
         """스크립트 위치를 기반으로 프로젝트 루트 디렉토리를 찾습니다."""
